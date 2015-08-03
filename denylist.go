@@ -19,9 +19,9 @@ type Notice struct {
 
 var repo = "/home/lars/workspace/ipfs/dmca"
 var repoDest = "./dmca"
-var blacklist []Notice
+var denylist []Notice
 
-func fetchBlacklist() ([]Notice, error) {
+func fetchDenylist() ([]Notice, error) {
 	exists := true
 	_, err := os.Stat(repoDest)
 	if err != nil && os.IsNotExist(err) {
@@ -60,7 +60,7 @@ func fetchBlacklist() ([]Notice, error) {
 		return nil, err
 	}
 
-	blklist := []Notice{}
+	dnylist := []Notice{}
 
 	for _, dir := range dirs {
 		dirName := strings.Join([]string{repoDir.Name(), dir.Name()}, "/")
@@ -89,10 +89,10 @@ func fetchBlacklist() ([]Notice, error) {
 			notice.Keys = append(notice.Keys, scan.Text())
 		}
 
-		blklist = append(blklist, notice)
+		dnylist = append(dnylist, notice)
 	}
 
-	return blklist, nil
+	return dnylist, nil
 }
 
 func runGit(cmd *exec.Cmd) error {
@@ -114,32 +114,25 @@ func runGit(cmd *exec.Cmd) error {
 	return nil
 }
 
-// [ { "notice": "https://dmca.ipfs.io/2015-08-03-foobar",
-// 		"keys": ["Qmsomething"] } ]
-//
-// GET /ipfs/Qmsomething HTTP/1.1
-// HTTP/1.1 451 Content Blocked
-// See https://dmca.ipfs.io/2015-08-03-foobar
-
 func main() {
 	go func() {
-		bl, err := fetchBlacklist()
+		dl, err := fetchDenylist()
 		if err != nil {
 			log.Printf("fetch error: %s\n", err)
 		} else {
 			numKeys := 0
-			for _, notice := range bl {
+			for _, notice := range dl {
 				numKeys = numKeys + len(notice.Keys)
 			}
-			log.Printf("fetch: %d notices, %d keys", len(bl), numKeys)
-			blacklist = bl
+			log.Printf("fetch: %d notices, %d keys", len(dl), numKeys)
+			denylist = dl
 		}
 	}()
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", `application/json`)
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(blacklist)
+		json.NewEncoder(w).Encode(denylist)
 		log.Printf("http req: %s\n", r.RequestURI)
 	})
 
