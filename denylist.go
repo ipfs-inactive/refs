@@ -2,142 +2,135 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"flag"
 	"fmt"
+	shell "github.com/whyrusleeping/ipfs-shell"
+	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 )
 
-type Notice struct {
-	Uri  string   `json:"uri"`
-	Keys []string `json:"keys"`
+type noticeData struct {
+	Body string
+	Keys []string
 }
 
-var repo = "/home/lars/workspace/ipfs/dmca"
-var repoDest = "./dmca"
-var denylist []Notice
+var noticeTemplate *template.Template
+var noticeBytes = `
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8" />
+	<title>Unavailable for Legal Reasons</title>
+</head>
+<body>
+	{{ .Body }}
+	<h2>Affected Objects</h2>
+	<ul>
+	{{ range .Keys }}
+		<li><a href="/ipfs/{{ . }}">/ipfs/{{ . }}</a></li>
+	{{ end }}
+	</ul>
+</body>
+</html>
+`
 
-func fetchDenylist() ([]Notice, error) {
-	exists := true
-	_, err := os.Stat(repoDest)
-	if err != nil && os.IsNotExist(err) {
-		exists = false
-	} else if err != nil {
-		return nil, err
-	}
-
-	if exists {
-		runGit(&exec.Cmd{
-			Path: "/usr/bin/git",
-			Args: []string{"/usr/bin/git", "fetch", "-av", "--progress"},
-			Dir:  repoDest,
-		})
-		runGit(&exec.Cmd{
-			Path: "/usr/bin/git",
-			Args: []string{"/usr/bin/git", "reset", "--hard", "origin/master"},
-			Dir:  repoDest,
-		})
-	} else {
-		runGit(&exec.Cmd{
-			Path: "/usr/bin/git",
-			Args: []string{"/usr/bin/git", "clone", "-v", "--progress", repo, repoDest},
-		})
-	}
-
-	// TODO: make use of ioutil from here on
-
-	repoDir, err := os.Open(repoDest)
+func addDenylist(srcpath string, sh *shell.Shell) (string, error) {
+	srcdir, err := os.Open(srcpath)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	dirs, err := repoDir.Readdir(0)
+	ndirs, err := srcdir.Readdir(0)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	dnylist := []Notice{}
+	lhash, err := sh.NewObject("unixfs-dir")
+	if err != nil {
+		return "", err
+	}
 
-	for _, dir := range dirs {
-		dirName := strings.Join([]string{repoDir.Name(), dir.Name()}, "/")
-		keysName := strings.Join([]string{dirName, "keys"}, "/")
-		noticeName := strings.Join([]string{dirName, "notice.md"}, "/")
-
-		_, err := os.Stat(keysName)
-		_, err2 := os.Stat(noticeName)
-		if err != nil || err2 != nil {
-			log.Printf("fetch: skip %s", dirName)
+	for _, dir := range ndirs {
+		if !dir.IsDir() || strings.HasPrefix(dir.Name(), ".") {
 			continue
 		}
 
-		notice := Notice{
-			Uri:  fmt.Sprintf("http://dmca.ipfs.io/%s", dir.Name()),
-			Keys: []string{},
-		}
+		dpath := strings.Join([]string{srcdir.Name(), dir.Name()}, "/")
+		kpath := strings.Join([]string{dpath, "keys"}, "/")
+		npath := strings.Join([]string{dpath, "notice.md"}, "/")
 
-		b, err := ioutil.ReadFile(keysName)
+		kbytes, err := ioutil.ReadFile(kpath)
 		if err != nil {
-			log.Printf("fetch: %s read error: %s", keysName, err)
-			continue
+			return "", err
 		}
-		scan := bufio.NewScanner(strings.NewReader(string(b)))
-		for scan.Scan() {
-			notice.Keys = append(notice.Keys, scan.Text())
+		keys := []string{}
+		s := bufio.NewScanner(strings.NewReader(string(kbytes)))
+		for s.Scan() {
+			keys = append(keys, s.Text())
 		}
 
-		dnylist = append(dnylist, notice)
+		nbytes, err := ioutil.ReadFile(npath)
+		if err != nil {
+			return "", err
+		}
+		ndata := &noticeData{
+			Keys: keys,
+			Body: string(nbytes),
+		}
+		nreader, nwriter := io.Pipe()
+		go func() {
+			noticeTemplate.Execute(nwriter, ndata)
+			nwriter.Close()
+		}()
+		nhash, err := sh.Add(nreader)
+		if err != nil {
+			return "", err
+		}
+
+		for _, k := range keys {
+			dhash, err := sh.NewObject("unixfs-dir")
+			if err != nil {
+				return "", err
+			}
+
+			dhash, err = sh.PatchLink(dhash, "notice", nhash, true)
+			if err != nil {
+				return "", err
+			}
+
+			dhash, err = sh.PatchLink(dhash, "object", k, true)
+			if err != nil {
+				return "", err
+			}
+
+			link := fmt.Sprintf("%s-%s", dir.Name(), k)
+			lhash, err = sh.PatchLink(lhash, link, dhash, true)
+			if err != nil {
+				return "", err
+			}
+		}
 	}
 
-	return dnylist, nil
-}
-
-func runGit(cmd *exec.Cmd) error {
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	scan := bufio.NewScanner(stderr)
-	for scan.Scan() {
-		log.Printf("fetch git: %s\n", scan.Text())
-	}
-
-	cmd.Wait()
-	return nil
+	return lhash, nil
 }
 
 func main() {
-	go func() {
-		dl, err := fetchDenylist()
-		if err != nil {
-			log.Printf("fetch error: %s\n", err)
-		} else {
-			numKeys := 0
-			for _, notice := range dl {
-				numKeys = numKeys + len(notice.Keys)
-			}
-			log.Printf("fetch: %d notices, %d keys", len(dl), numKeys)
-			denylist = dl
-		}
-	}()
+	u := flag.String("uri", "127.0.0.1:5001", "the IPFS API endpoint to use")
+	// p := flag.Bool("pin", false, "pin after adding")
+	flag.Parse()
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", `application/json`)
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(denylist)
-		log.Printf("http req: %s\n", r.RequestURI)
-	})
+	noticeTemplate = template.Must(template.New("notice").Parse(string(noticeBytes)))
 
-	err := http.ListenAndServe("127.0.0.1:8080", nil)
+	sh := shell.NewShell(*u)
+
+	h, err := addDenylist("./", sh)
 	if err != nil {
-		log.Fatalf("http error: %s\n", err)
+		log.Fatalf("denylist failed: %s\n", err)
 	}
+
+	fmt.Println(h)
 }
