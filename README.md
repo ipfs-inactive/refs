@@ -17,23 +17,11 @@ is part of the gateways' nginx configuration:
 # Usage
 
 ```sh
-$ cd lists-denylists-dmca/
+# render, add, and publish the denylist
 $ make publish
-https://ipfs.io/refs/lists/denylists/dmca
-https://ipfs.io/ipfs/QmRER7erZxU63huYgSBryGhKrfHdkDkVjwQTd8RD4RdSW5
-QmRER7erZxU63huYgSBryGhKrfHdkDkVjwQTd8RD4RdSW5
-```
-
-Long version:
-
-```sh
-$ cd lists-denylists-dmca/
-# render the denylist, and add it
-$ hash=$(go run dmca.go)
-# pin the denylist
-$ ipfs pin add /ipfs/$hash
-# update the TXT record for IPNS
-$ dnslink-deploy --domain refs.ipfs.io --record dmca.denylists.lists --path /ipfs/$hash
+$ git add versions/ && git commit -m 'Publish' && git push
+# update the TXT record for dmca.denylists.lists.refs.ipfs.io
+$ make dnslink
 # wait for it to propagate
 $ watch dig TXT dmca.denylists.lists.refs.ipfs.io
 ```

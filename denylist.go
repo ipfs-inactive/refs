@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -86,7 +87,8 @@ func addDenylist(srcpath string, sh *shell.Shell) (string, error) {
 	}
 
 	for _, dir := range ndirs {
-		if !dir.IsDir() || strings.HasPrefix(dir.Name(), ".") {
+		omit := regexp.MustCompile(`\A(\.|node_modules|versions)`)
+		if !dir.IsDir() || omit.Match([]byte(dir.Name())) {
 			continue
 		}
 
