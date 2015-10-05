@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -86,7 +87,8 @@ func addDenylist(srcpath string, sh *shell.Shell) (string, error) {
 	}
 
 	for _, dir := range ndirs {
-		if !dir.IsDir() || strings.HasPrefix(dir.Name(), ".") {
+		omit := regexp.MustCompile(`\A(\.|node_modules|versions)`)
+		if !dir.IsDir() || omit.Match([]byte(dir.Name())) {
 			continue
 		}
 
@@ -127,6 +129,24 @@ func addDenylist(srcpath string, sh *shell.Shell) (string, error) {
 	return lhash, nil
 }
 
+func addPrevious(hist string, lhash string, sh *shell.Shell) (string, error) {
+	b, err := ioutil.ReadFile(hist)
+	if err != nil {
+		return "", err
+	}
+	var vhash string
+	s := bufio.NewScanner(strings.NewReader(string(b)))
+	for s.Scan() {
+		vhash = s.Text()
+	}
+
+	nhash, err := sh.PatchLink(lhash, "previous", vhash, true)
+	if err != nil {
+		return "", err
+	}
+	return nhash, nil
+}
+
 // Creates a unixfs structure of notice/object tuples,
 // e.g. /ipfs/Qmdenylist/2015-09-24-Qmobject/notice (the rendered notice)
 // and /ipfs/Qmdenylist/2015-09-24-Qmobject/object (link to Qmobject)
@@ -144,6 +164,11 @@ func main() {
 	h, err := addDenylist("./", sh)
 	if err != nil {
 		log.Fatalf("denylist failed: %s\n", err)
+	}
+
+	h, err = addPrevious("./versions/history", h, sh)
+	if err != nil {
+		log.Fatalf("previous failed: %s\n", err)
 	}
 
 	fmt.Println(h)
