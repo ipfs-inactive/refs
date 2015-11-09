@@ -1,2 +1,4 @@
 auth.token
 node_modules
+dmca/notices/
+dmca/bindata.go
