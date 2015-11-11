@@ -3,12 +3,11 @@ gway="https://ipfs.io/ipfs/"
 domain="refs.ipfs.io"
 record="@"
 
-build:
+publish:
 	rm -rf dmca/notices
 	git clone https://github.com/ipfs/refs-denylists-dmca.git dmca/notices
 	go-bindata -pkg dmca -o dmca/bindata.go -ignore '^dmca/notices/\.git' dmca/notices/...
 
-publish:
 	go run main.go -current=$(shell cat versions/current) | tail -n1 >versions/current
 	cat versions/current >>versions/history
 	@export hash=`cat versions/current`; \
@@ -30,4 +29,4 @@ node_modules: package.json
 	npm install
 	touch node_modules
 
-.PHONY: publish dnslink
+.PHONY: build dnslink
